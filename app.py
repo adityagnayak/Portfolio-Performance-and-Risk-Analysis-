@@ -211,7 +211,15 @@ def compute_metrics(prices: pd.DataFrame, tickers: list[str], benchmark: str,
 
     bench_rets = prices[benchmark].pct_change().dropna()
     bench_rets = bench_rets.reindex(port_daily.index).dropna()
-    port_daily = port_daily.reindex(bench_rets.index)
+    port_daily = port_daily.reindex(bench_rets.index).dropna()
+
+    if len(port_daily) == 0:
+        raise ValueError(
+            "No overlapping trading days between your portfolio and the selected benchmark. "
+            "This usually happens when mixing markets with different trading calendars "
+            "(e.g. Indian stocks vs FTSE). Try switching to a same-market benchmark or "
+            "widening your date range."
+        )
 
     # Cumulative
     cum_port  = (1 + port_daily).cumprod()
@@ -314,12 +322,15 @@ with st.sidebar:
     if weight_mode == "Custom Weights" and tickers:
         raw_weights = []
         for t in tickers:
-            w = st.slider(f"{t}", 0, 100, int(100 / len(tickers)), 1)
+            w = st.number_input(f"{t} (%)", min_value=0.0, max_value=100.0,
+                                value=round(100 / len(tickers), 1), step=0.1, format="%.1f")
             raw_weights.append(w)
         total = sum(raw_weights)
         if total > 0:
             weights = np.array(raw_weights) / total
-        st.caption(f"Normalised total: {sum(raw_weights)}% → 100%")
+            st.caption(f"Total: {total:.1f}% → normalised to 100%")
+        else:
+            st.warning("Weights sum to 0.")
 
     rf_rate = st.number_input("Risk-Free Rate (%)", value=6.5, step=0.1, format="%.1f") / 100
 
@@ -360,7 +371,11 @@ if benchmark not in prices.columns:
     st.error(f"Benchmark '{benchmark}' not found.")
     st.stop()
 
-m = compute_metrics(prices, tickers, benchmark, weights, rf_rate)
+try:
+    m = compute_metrics(prices, tickers, benchmark, weights, rf_rate)
+except ValueError as e:
+    st.error(str(e))
+    st.stop()
 
 # ── KPI Row ───────────────────────────────────────────────────────────────────
 def _cls(v): return "pos" if v >= 0 else "neg"
